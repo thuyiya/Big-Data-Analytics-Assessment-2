@@ -267,7 +267,12 @@ print(f"\nPearson correlation: {corr}")
 # =============================================
 # 7. Spark SQL Query
 # =============================================
-print("\nTask 7: Spark SQL Query")
+# First check if the conditions are possible
+min_age, max_age = df3.select(min("Age"), max("Age")).first()
+min_score, max_score = df3.select(min("SpendingScore"), max("SpendingScore")).first()
+
+print(f"Age range: {min_age}-{max_age}")
+print(f"SpendingScore range: {min_score}-{max_score}")
 
 df3.createOrReplaceTempView("customers")
 result = spark.sql("""
@@ -276,8 +281,14 @@ result = spark.sql("""
     WHERE Age < 50 AND SpendingScore > 100
 """)
 
-print("\nCustomers with Age < 50 and SpendingScore > 100:")
-result.show()
+count = result.count()
+if count > 0:
+    print(f"\nFound {count} customers meeting criteria:")
+    result.show()
+else:
+    print("\nNo customers found with Age < 50 and SpendingScore > 100")
+    print("Showing customers with highest SpendingScore instead:")
+    df3.orderBy(desc("SpendingScore")).select("Age", "SpendingScore").show(5)
 
 # =============================================
 # 8. Decision Tree Classifier
