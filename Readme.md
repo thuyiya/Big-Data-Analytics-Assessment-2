@@ -1,21 +1,36 @@
 # Big Data Assessment
 
-## Setup and Installation
+## Setup Instructions
 
-1. Create a virtual environment:
+1. Create and activate virtual environment:
 ```bash
 python -m venv venv
+source venv/bin/activate  # On Mac/Linux
+# or
+.\venv\Scripts\activate  # On Windows
 ```
 
-2. Activate the virtual environment:
+2. Install required packages:
 ```bash
-source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-3. Install required packages:
+3. Run the analysis:
 ```bash
-pip install pyspark pandas numpy matplotlib seaborn
+python bigdata_assessment.py
 ```
+
+## Requirements
+- Python 3.8+
+- Java 8+ (required for PySpark)
+
+## Dependencies
+- PySpark
+- Pandas
+- Matplotlib
+- Seaborn
+- Scikit-learn
+- NumPy
 
 ## Running the Project
 

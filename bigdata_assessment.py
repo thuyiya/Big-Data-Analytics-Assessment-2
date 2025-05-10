@@ -6,12 +6,14 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 from pyspark.ml.feature import VectorAssembler, StringIndexer
+from pyspark.ml import Pipeline
 from pyspark.ml.classification import DecisionTreeClassifier, LogisticRegression
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.evaluation import BinaryClassificationEvaluator, RegressionEvaluator
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+from sklearn.metrics import confusion_matrix 
 
 # Create directory for saving visualizations
 if not os.path.exists('visualizations'):
@@ -40,6 +42,65 @@ df1.show(5, truncate=False)
 
 print("\nSummary Statistics:")
 df1.describe().show()
+
+# =============================================
+# 2. Enhanced Data Visualization
+# =============================================
+print("\nEnhanced Data Visualization Section")
+
+# Convert to Pandas for visualization
+df_pd = df1.limit(1000).toPandas()
+
+# i. Age Distribution
+plt.figure(figsize=(10, 6))
+sns.histplot(df_pd['Age'], bins=30, kde=True)
+plt.title('Distribution of Customer Ages')
+plt.xlabel('Age')
+plt.ylabel('Count')
+plt.savefig('visualizations/age_distribution.png')
+plt.close()
+print("Saved age_distribution.png")
+
+# ii. Gender Distribution
+plt.figure(figsize=(8, 5))
+df_pd['Gender'].value_counts().plot(kind='bar', color=['skyblue', 'salmon'])
+plt.title('Gender Distribution')
+plt.xlabel('Gender')
+plt.ylabel('Count')
+plt.savefig('visualizations/gender_distribution.png')
+plt.close()
+print("Saved gender_distribution.png")
+
+# iii. Income vs Spending Score
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x='AnnualIncome', y='SpendingScore', hue='Gender', data=df_pd)
+plt.title('Annual Income vs Spending Score')
+plt.xlabel('Annual Income (£)')
+plt.ylabel('Spending Score')
+plt.savefig('visualizations/income_vs_spending.png')
+plt.close()
+print("Saved income_vs_spending.png")
+
+# iv. Purchase Categories
+plt.figure(figsize=(12, 6))
+df_pd['PurchaseCategory'].value_counts().plot(kind='bar')
+plt.title('Purchase Category Distribution')
+plt.xlabel('Category')
+plt.ylabel('Count')
+plt.xticks(rotation=45)
+plt.savefig('visualizations/purchase_categories.png')
+plt.close()
+print("Saved purchase_categories.png")
+
+# v. Correlation Heatmap
+plt.figure(figsize=(10, 8))
+numeric_cols = df_pd.select_dtypes(include=[np.number]).columns
+corr_matrix = df_pd[numeric_cols].corr()
+sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0)
+plt.title('Feature Correlation Heatmap')
+plt.savefig('visualizations/correlation_heatmap.png')
+plt.close()
+print("Saved correlation_heatmap.png")
 
 # =============================================
 # 2. Handling Missing Values
@@ -89,6 +150,43 @@ df3 = df2.filter(
 rows_removed = df2.count() - df3.count()
 print(f"Number of rows removed: {rows_removed}")
 print(f"Rows in cleaned DataFrame: {df3.count()}")
+
+# =============================================
+# 2,3 Steps - Post-Cleaning Visualizations
+# =============================================
+print("\nPost-Cleaning Visualizations")
+
+df3_pd = df3.limit(1000).toPandas()
+
+# i. Spending Score Distribution After Cleaning
+plt.figure(figsize=(10, 6))
+sns.histplot(df3_pd['SpendingScore'], bins=30, kde=True)
+plt.title('Spending Score Distribution After Cleaning')
+plt.xlabel('Spending Score')
+plt.ylabel('Count')
+plt.savefig('visualizations/spending_score_clean.png')
+plt.close()
+print("Saved spending_score_clean.png")
+
+# ii. Purchase Amount Distribution
+plt.figure(figsize=(10, 6))
+sns.histplot(df3_pd['PurchaseAmount'], bins=30, kde=True)
+plt.title('Purchase Amount Distribution')
+plt.xlabel('Purchase Amount (£)')
+plt.ylabel('Count')
+plt.savefig('visualizations/purchase_amount_dist.png')
+plt.close()
+print("Saved purchase_amount_dist.png")
+
+# iii. Age vs Purchase Amount
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x='Age', y='PurchaseAmount', hue='Gender', data=df3_pd)
+plt.title('Age vs Purchase Amount')
+plt.xlabel('Age')
+plt.ylabel('Purchase Amount (£)')
+plt.savefig('visualizations/age_vs_purchase.png')
+plt.close()
+print("Saved age_vs_purchase.png")
 
 # =============================================
 # 4. Summary Statistics and Histogram
@@ -186,35 +284,90 @@ result.show()
 # =============================================
 print("\nTask 8: Decision Tree Classifier")
 
-if "Outcome" in df3.columns:
-    categorical_cols = [col for col in df3.columns if col in ["Gender", "PurchaseCategory"]]
-    indexers = [StringIndexer(inputCol=col, outputCol=col+"_index").fit(df3) for col in categorical_cols]
-    
-    pipeline = Pipeline(stages=indexers)
-    df3_indexed = pipeline.fit(df3).transform(df3)
-    
-    feature_cols = [col for col in df3.columns 
-                   if col not in ["CustomerID", "Outcome"] + categorical_cols] + [col+"_index" for col in categorical_cols]
-    
-    assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
-    df3_assembled = assembler.transform(df3_indexed)
-    
-    train_data, test_data = df3_assembled.randomSplit([0.7, 0.3], seed=42)
-    
-    dt = DecisionTreeClassifier(labelCol="Outcome", featuresCol="features")
-    dt_model = dt.fit(train_data)
-    
-    predictions = dt_model.transform(test_data)
-    
-    evaluator = BinaryClassificationEvaluator(labelCol="Outcome")
-    accuracy = evaluator.evaluate(predictions)
-    print(f"\nDecision Tree AUC: {accuracy}")
-    
-    print("\nFeature Importances:")
-    for feature, importance in zip(feature_cols, dt_model.featureImportances):
-        print(f"{feature}: {importance}")
-else:
-    print("Outcome column not found")
+# Create binary Outcome based on SpendingScore
+# Customers with SpendingScore > median will be labeled as 1 (high spender), others as 0
+spending_median = df3.approxQuantile("SpendingScore", [0.5], 0.01)[0]
+df3_with_outcome = df3.withColumn("Outcome", 
+    when(col("SpendingScore") > spending_median, 1.0).otherwise(0.0))
+
+print(f"\nCreated binary Outcome based on SpendingScore median ({spending_median:.2f}):")
+print("0 = Low spender, 1 = High spender")
+df3_with_outcome.groupBy("Outcome").count().show()
+
+# Prepare features and label
+categorical_cols = ["Gender", "PurchaseCategory"]
+indexers = [StringIndexer(inputCol=col, outputCol=col+"_indexed") for col in categorical_cols]
+
+# Create numerical feature list (excluding CustomerID and Outcome)
+numerical_cols = [col for col in df3_with_outcome.columns 
+                 if col not in ["CustomerID", "Outcome", "SpendingScore"] + categorical_cols]
+
+# Create pipeline for categorical conversion
+indexing_pipeline = Pipeline(stages=indexers)
+df_indexed = indexing_pipeline.fit(df3_with_outcome).transform(df3_with_outcome)
+
+# Combine all features
+feature_cols = numerical_cols + [col+"_indexed" for col in categorical_cols]
+
+# Create feature vector
+assembler = VectorAssembler(
+    inputCols=feature_cols,
+    outputCol="features",
+    handleInvalid="skip"
+)
+df_assembled = assembler.transform(df_indexed)
+
+# Split the data
+train_data, test_data = df_assembled.randomSplit([0.7, 0.3], seed=42)
+
+# Initialize and train the Decision Tree Classifier
+dt = DecisionTreeClassifier(
+    labelCol="Outcome",
+    featuresCol="features",
+    maxDepth=5,
+    seed=42
+)
+dt_model = dt.fit(train_data)
+
+# Make predictions
+predictions = dt_model.transform(test_data)
+
+# Evaluate the model
+evaluator = BinaryClassificationEvaluator(
+    labelCol="Outcome",
+    metricName="areaUnderROC"
+)
+auc_roc = evaluator.evaluate(predictions)
+
+# Calculate accuracy
+accuracy = predictions.filter(col("prediction") == col("Outcome")).count() / test_data.count()
+
+print("\nDecision Tree Model Performance:")
+print(f"Area Under ROC: {auc_roc:.4f}")
+print(f"Accuracy: {accuracy:.4f}")
+
+# Feature importance analysis
+print("\nFeature Importances:")
+for feature, importance in sorted(zip(feature_cols, dt_model.featureImportances.toArray()), 
+                                key=lambda x: x[1], reverse=True):
+    print(f"{feature}: {importance:.4f}")
+
+# Confusion Matrix
+conf_matrix = predictions.groupBy("Outcome", "prediction").count().orderBy("Outcome", "prediction")
+print("\nConfusion Matrix:")
+conf_matrix.show()
+
+# Visualize Decision Tree performance
+predictions_pd = predictions.select("Outcome", "prediction", "probability").toPandas()
+plt.figure(figsize=(8, 6))
+sns.heatmap(confusion_matrix(predictions_pd["Outcome"], predictions_pd["prediction"]), 
+            annot=True, fmt="d", cmap="Blues")
+plt.title("Confusion Matrix Heatmap")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.savefig('visualizations/decision_tree_confusion_matrix.png')
+plt.close()
+print("Saved decision_tree_confusion_matrix.png")
 
 # =============================================
 # 9. Logistic Regression Classifier
