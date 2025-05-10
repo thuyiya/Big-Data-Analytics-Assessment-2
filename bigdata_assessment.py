@@ -1,247 +1,264 @@
-# Import required libraries
+print("Big Data Analytics Assessment 2 - PySpark Implementation")
+# 1. Initial Setup and Data Loading
+print("\nTask 1: Initial Setup and Data Loading")
+# Import necessary PySpark modules
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when, count, isnan, lit, expr, min, max, mean, stddev, variance
+from pyspark.sql.functions import *
 from pyspark.sql.types import *
-from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.feature import VectorAssembler, StringIndexer
 from pyspark.ml.classification import DecisionTreeClassifier, LogisticRegression
 from pyspark.ml.regression import LinearRegression
-from pyspark.ml.evaluation import MulticlassClassificationEvaluator, RegressionEvaluator
-import matplotlib
-matplotlib.use('Agg')  # Set non-interactive backend
+from pyspark.ml.evaluation import BinaryClassificationEvaluator, RegressionEvaluator
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-import numpy as np
-import os
- 
- # Initialize Spark session
+
+# Initialize Spark session
 spark = SparkSession.builder \
-    .appName("BigDataAssessment") \
-    .config("spark.driver.memory", "4g") \
-    .config("spark.executor.memory", "4g") \
-    .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
-    .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
+    .appName("BigDataAnalyticsAssessment2") \
     .getOrCreate()
 
-# Create output directory for visualizations
-os.makedirs("visualizations", exist_ok=True)
+# Load the dataset into PySpark DataFrame (1st DataFrame)
+file_path = "customer_purchases.csv"  # Update with your actual file path
+df1 = spark.read.csv(file_path, header=True, inferSchema=True)
 
-# Task 1: Load the dataset and describe structure
-df1 = spark.read.csv("customer_purchases.csv", header=True, inferSchema=True)
-
-print("=== Task 1 ===")
-print("DataFrame Structure:")
+# Describe the structure of the DataFrame
+print("DataFrame Schema:")
 df1.printSchema()
-print(f"Number of rows: {df1.count()}")
-print(f"Number of columns: {len(df1.columns)}")
 
-# Task 2: Replace null/missing values with medians
-print("\n=== Task 2 ===")
-medians = df1.approxQuantile(["SpendingScore", "TotalPurchases"], [0.5], 0.25)
+print("\nFirst 5 rows:")
+df1.show(5)
+
+print("\nSummary Statistics:")
+df1.describe().show()
+
+# 2. Handling Missing Values
+print("\nTask 2: Handling Missing Values")
+# Calculate median values for SpendingScore and TotalPurchases
+from pyspark.sql.functions import expr
+
+# Calculate medians (PySpark doesn't have direct median function, so we use approxQuantile)
+medians = df1.approxQuantile(["SpendingScore", "TotalPurchases"], [0.5], 0.01)
 spending_score_median = medians[0][0]
 total_purchases_median = medians[1][0]
 
-df2 = df1.withColumn("SpendingScore", 
-                    when((col("SpendingScore").isNull()) | (col("SpendingScore") == 0), 
-                         spending_score_median)
-                    .otherwise(col("SpendingScore"))) \
-         .withColumn("TotalPurchases", 
-                    when((col("TotalPurchases").isNull()) | (col("TotalPurchases") == 0), 
-                         total_purchases_median)
-                    .otherwise(col("TotalPurchases")))
+print(f"Median SpendingScore: {spending_score_median}")
+print(f"Median TotalPurchases: {total_purchases_median}")
 
-print("Missing values after replacement:")
-df2.select([count(when(col(c).isNull() | (col(c) == 0), c)).alias(c) for c in ["SpendingScore", "TotalPurchases"]]).show()
+# Replace null/missing values (0s) with medians and create 2nd DataFrame
+df2 = df1.withColumn(
+    "SpendingScore", 
+    when((col("SpendingScore").isNull()) | (col("SpendingScore") == 0), spending_score_median)
+    .otherwise(col("SpendingScore"))
+).withColumn(
+    "TotalPurchases",
+    when((col("TotalPurchases").isNull()) | (col("TotalPurchases") == 0), total_purchases_median)
+    .otherwise(col("TotalPurchases"))
+)
 
-# Task 3: Remove rows with missing values in key columns
-print("\n=== Task 3 ===")
-df3 = df2.filter((col("Age") != 0) & (~col("Age").isNull()) & 
-                (col("AnnualIncome") != 0) & (~col("AnnualIncome").isNull()) & 
-                (col("PurchaseAmount") != 0) & (~col("PurchaseAmount").isNull()))
+# Verify the replacement
+print("\nMissing values after replacement:")
+df2.select([
+    sum(when(col(c).isNull() | (col(c) == 0), 1).otherwise(0)).alias(c) 
+    for c in ["SpendingScore", "TotalPurchases"]
+]).show()
 
+# 3. Removing Rows with Missing Values
+print("\nTask 3: Removing Rows with Missing Values")
+# Create 3rd DataFrame by removing rows with null/0 values in Age, AnnualIncome, or PurchaseAmount
+df3 = df2.filter(
+    (col("Age") != 0) & 
+    (col("Age").isNotNull()) &
+    (col("AnnualIncome") != 0) & 
+    (col("AnnualIncome").isNotNull()) &
+    (col("PurchaseAmount") != 0) & 
+    (col("PurchaseAmount").isNotNull())
+)
+
+# Compute number of rows removed
 rows_removed = df2.count() - df3.count()
 print(f"Number of rows removed: {rows_removed}")
 
-# Task 4: Summary statistics and histogram
-print("\n=== Task 4 ===")
-stats = df3.select(
-    min("PurchaseAmount").alias("min"),
-    max("PurchaseAmount").alias("max"),
-    mean("PurchaseAmount").alias("mean"),
-    expr("percentile_approx(PurchaseAmount, 0.5)").alias("median"),
-    variance("PurchaseAmount").alias("variance"),
-    stddev("PurchaseAmount").alias("stddev")
-).collect()[0]
+# Show the count of the cleaned DataFrame
+print(f"Rows in cleaned DataFrame: {df3.count()}")
 
-print("PurchaseAmount Statistics:")
-print(f"Min: {stats['min']:.2f}")
-print(f"Max: {stats['max']:.2f}")
-print(f"Mean: {stats['mean']:.2f}")
-print(f"Median: {stats['median']:.2f}")
-print(f"Variance: {stats['variance']:.2f}")
-print(f"Standard Deviation: {stats['stddev']:.2f}")
+# 4. Summary Statistics and Histogram
+print("\nTask 4: Summary Statistics and Histogram")
+# Compute summary statistics for BloodPressure (assuming this column exists)
+if "BloodPressure" in df3.columns:
+    # Summary statistics
+    stats = df3.select(
+        min("BloodPressure").alias("min"),
+        max("BloodPressure").alias("max"),
+        mean("BloodPressure").alias("mean"),
+        expr("percentile_approx(BloodPressure, 0.5)").alias("median"),
+        variance("BloodPressure").alias("variance"),
+        stddev("BloodPressure").alias("stddev")
+    ).collect()[0]
+    
+    print("\nBloodPressure Statistics:")
+    print(f"Min: {stats['min']}")
+    print(f"Max: {stats['max']}")
+    print(f"Mean: {stats['mean']}")
+    print(f"Median: {stats['median']}")
+    print(f"Variance: {stats['variance']}")
+    print(f"Standard Deviation: {stats['stddev']}")
+    
+    # Generate histogram (convert to Pandas for visualization)
+    bp_pd = df3.select("BloodPressure").toPandas()
+    plt.figure(figsize=(10, 6))
+    sns.histplot(bp_pd["BloodPressure"], bins=20, kde=True)
+    plt.title("Distribution of BloodPressure")
+    plt.xlabel("BloodPressure")
+    plt.ylabel("Frequency")
+    plt.show()
+else:
+    print("BloodPressure column not found in the DataFrame")
 
-# Histogram with proper data handling
-pd_purchase = df3.select("PurchaseAmount").toPandas()
-plt.figure(figsize=(12, 6))
-plt.hist(pd_purchase["PurchaseAmount"], bins=30, color='skyblue', edgecolor='black')
-plt.title("Distribution of Purchase Amounts", fontsize=14, pad=20)
-plt.xlabel("Purchase Amount (£)", fontsize=12)
-plt.ylabel("Frequency", fontsize=12)
-plt.grid(True, alpha=0.3)
-plt.axvline(stats['mean'], color='red', linestyle='dashed', linewidth=2, 
-            label=f'Mean: £{stats["mean"]:.2f}')
-plt.axvline(stats['median'], color='green', linestyle='dashed', linewidth=2, 
-            label=f'Median: £{stats["median"]:.2f}')
-plt.legend()
-plt.tight_layout()
-plt.savefig("visualizations/purchase_amount_histogram.png", dpi=300, bbox_inches='tight')
-plt.close()
-print("Histogram saved as visualizations/purchase_amount_histogram.png")
+# 5. Quartile Information and Boxplot
+print("\nTask 5: Quartile Information and Boxplot")
+# Quartile info for TotalPurchases
+quantiles = df3.approxQuantile("TotalPurchases", [0.25, 0.5, 0.75], 0.01)
+print("\nTotalPurchases Quartiles:")
+print(f"Q1 (25th percentile): {quantiles[0]}")
+print(f"Q2 (Median): {quantiles[1]}")
+print(f"Q3 (75th percentile): {quantiles[2]}")
 
-# Task 5: Quartile info and boxplot
-print("\n=== Task 5 ===")
-quartiles = df3.approxQuantile("TotalPurchases", [0.25, 0.5, 0.75], 0.05)
-print(f"Q1 (25th percentile): {quartiles[0]:.2f}")
-print(f"Q2 (Median): {quartiles[1]:.2f}")
-print(f"Q3 (75th percentile): {quartiles[2]:.2f}")
-
-# Boxplot with proper data conversion
-pd_total_purchases = df3.select("TotalPurchases").toPandas()
+# Boxplot for TotalPurchases (convert to Pandas for visualization)
+tp_pd = df3.select("TotalPurchases").toPandas()
 plt.figure(figsize=(10, 6))
-sns.boxplot(y=pd_total_purchases["TotalPurchases"], color='lightgreen')
-plt.title("Distribution of Total Purchases", fontsize=14)
-plt.ylabel("Number of Purchases", fontsize=12)
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.savefig("visualizations/total_purchases_boxplot.png", dpi=300, bbox_inches='tight')
-plt.close()
-print("Boxplot saved as visualizations/total_purchases_boxplot.png")
+sns.boxplot(x=tp_pd["TotalPurchases"])
+plt.title("Boxplot of TotalPurchases")
+plt.xlabel("TotalPurchases")
+plt.show()
 
-# Task 6: Correlation Analysis
-print("\n=== Task 6 ===")
-pd_scatter = df3.select("PurchaseAmount", "SpendingScore").toPandas()
-correlation = df3.stat.corr("PurchaseAmount", "SpendingScore", "pearson")
+# 6. Relationship Between PurchaseAmount and SpendingScore
+print("\nTask 6: Relationship Between PurchaseAmount and SpendingScore")
+# Scatter plot of PurchaseAmount vs SpendingScore
+pa_ss_pd = df3.select("PurchaseAmount", "SpendingScore").toPandas()
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x="PurchaseAmount", y="SpendingScore", data=pa_ss_pd)
+plt.title("PurchaseAmount vs SpendingScore")
+plt.xlabel("PurchaseAmount")
+plt.ylabel("SpendingScore")
+plt.show()
 
-plt.figure(figsize=(12, 6))
-sns.scatterplot(data=pd_scatter, x="SpendingScore", y="PurchaseAmount", 
-               alpha=0.6, color='purple')
-plt.title("Purchase Amount vs Spending Score", fontsize=14)
-plt.xlabel("Spending Score (1-100)", fontsize=12)
-plt.ylabel("Purchase Amount (£)", fontsize=12)
-plt.grid(True, alpha=0.3)
+# Calculate Pearson correlation
+corr = df3.corr("PurchaseAmount", "SpendingScore")
+print(f"\nPearson correlation between PurchaseAmount and SpendingScore: {corr}")
 
-# Add correlation text
-plt.text(0.05, 0.95, f'Pearson r = {correlation:.2f}', 
-         transform=plt.gca().transAxes, fontsize=12,
-         bbox=dict(facecolor='white', alpha=0.8))
-
-plt.tight_layout()
-plt.savefig("visualizations/purchase_vs_spending.png", dpi=300, bbox_inches='tight')
-plt.close()
-print(f"Pearson correlation coefficient: {correlation:.4f}")
-print("Scatter plot saved as visualizations/purchase_vs_spending.png")
-
-# Task 7: Spark SQL query
-print("\n=== Task 7 ===")
+# 7. Spark SQL Query
+print("\nTask 7: Spark SQL Query")
+# Create a temporary view for SQL queries
 df3.createOrReplaceTempView("customers")
+
+# Execute SQL query
 result = spark.sql("""
     SELECT Age, SpendingScore 
     FROM customers 
     WHERE Age < 50 AND SpendingScore > 100
-    ORDER BY SpendingScore DESC
-    LIMIT 10
 """)
-print("Top 10 Customers with Age < 50 and SpendingScore > 100:")
-result.show(truncate=False)
 
-# Visualization for Task 7
-pd_top_customers = result.toPandas()
-plt.figure(figsize=(12, 6))
-sns.barplot(data=pd_top_customers, x="Age", y="SpendingScore", palette="viridis")
-plt.title("Top Customers: Age vs Spending Score", fontsize=14)
-plt.xlabel("Age", fontsize=12)
-plt.ylabel("Spending Score", fontsize=12)
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.savefig("top_customers.png", dpi=300, bbox_inches='tight')
-plt.close()
-print("Top customers visualization saved as top_customers.png")
+print("\nCustomers with Age < 50 and SpendingScore > 100:")
+result.show()
 
-# Task 8: Decision Tree Classifier
-print("\n=== Task 8 ===")
-# Create binary outcome based on PurchaseAmount > median
-median_purchase = df3.approxQuantile("PurchaseAmount", [0.5], 0.05)[0]
-df_model = df3.withColumn("Outcome", when(col("PurchaseAmount") > median_purchase, 1).otherwise(0))
+# 8. Decision Tree Classifier
+print("\nTask 8: Decision Tree Classifier")
+# Prepare data for Decision Tree
+if "Outcome" in df3.columns:
+    # Index categorical columns
+    categorical_cols = [col for col in df3.columns if col in ["Gender", "PurchaseCategory"]]
+    indexers = [StringIndexer(inputCol=col, outputCol=col+"_index").fit(df3) for col in categorical_cols]
+    
+    # Pipeline for indexing
+    from pyspark.ml import Pipeline
+    pipeline = Pipeline(stages=indexers)
+    df3_indexed = pipeline.fit(df3).transform(df3)
+    
+    # Select features (excluding CustomerID and Outcome)
+    feature_cols = [col for col in df3.columns 
+                   if col not in ["CustomerID", "Outcome"] + categorical_cols] + [col+"_index" for col in categorical_cols]
+    
+    # Assemble features
+    assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
+    df3_assembled = assembler.transform(df3_indexed)
+    
+    # Split data
+    train_data, test_data = df3_assembled.randomSplit([0.7, 0.3], seed=42)
+    
+    # Train Decision Tree
+    dt = DecisionTreeClassifier(labelCol="Outcome", featuresCol="features")
+    dt_model = dt.fit(train_data)
+    
+    # Make predictions
+    predictions = dt_model.transform(test_data)
+    
+    # Evaluate model
+    evaluator = BinaryClassificationEvaluator(labelCol="Outcome")
+    accuracy = evaluator.evaluate(predictions)
+    print(f"\nDecision Tree AUC: {accuracy}")
+    
+    # Feature importance
+    print("\nFeature Importances:")
+    for feature, importance in zip(feature_cols, dt_model.featureImportances):
+        print(f"{feature}: {importance}")
+else:
+    print("Outcome column not found in the DataFrame")
 
-# Prepare features
-feature_cols = ["Age", "AnnualIncome", "SpendingScore", "TotalPurchases"]
-assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
-df_assembled = assembler.transform(df_model)
+# 9. Logistic Regression Classifier
+print("\nTask 9: Logistic Regression Classifier")
+# Prepare data for Logistic Regression
+if "Outcome" in df3.columns:
+    # Use the same prepared data from Decision Tree
+    
+    # Train Logistic Regression
+    lr = LogisticRegression(labelCol="Outcome", featuresCol="features")
+    lr_model = lr.fit(train_data)
+    
+    # Make predictions
+    lr_predictions = lr_model.transform(test_data)
+    
+    # Evaluate model
+    lr_accuracy = evaluator.evaluate(lr_predictions)
+    print(f"\nLogistic Regression AUC: {lr_accuracy}")
+    
+    # Coefficients
+    print("\nModel Coefficients:")
+    for feature, coef in zip(feature_cols, lr_model.coefficients):
+        print(f"{feature}: {coef}")
+else:
+    print("Outcome column not found in the DataFrame")
+
+# 10. Linear Regression Model
+print("\nTask 10: Linear Regression Model")
+# Prepare data for Linear Regression
+# Assemble features (just AnnualIncome in this case)
+lr_assembler = VectorAssembler(inputCols=["AnnualIncome"], outputCol="features")
+df3_lr = lr_assembler.transform(df3)
 
 # Split data
-train, test = df_assembled.randomSplit([0.8, 0.2], seed=42)
+lr_train_data, lr_test_data = df3_lr.randomSplit([0.7, 0.3], seed=42)
 
-# Train model
-dt = DecisionTreeClassifier(labelCol="Outcome", featuresCol="features")
-dt_model = dt.fit(train)
+# Train Linear Regression
+lin_reg = LinearRegression(featuresCol="features", labelCol="PurchaseAmount")
+lin_reg_model = lin_reg.fit(lr_train_data)
 
 # Make predictions
-predictions = dt_model.transform(test)
+lr_predictions = lin_reg_model.transform(lr_test_data)
 
-# Evaluate
-evaluator = MulticlassClassificationEvaluator(labelCol="Outcome", predictionCol="prediction")
-accuracy = evaluator.evaluate(predictions, {evaluator.metricName: "accuracy"})
-precision = evaluator.evaluate(predictions, {evaluator.metricName: "weightedPrecision"})
-recall = evaluator.evaluate(predictions, {evaluator.metricName: "weightedRecall"})
-f1 = evaluator.evaluate(predictions, {evaluator.metricName: "f1"})
+# Evaluate model
+reg_evaluator = RegressionEvaluator(labelCol="PurchaseAmount", predictionCol="prediction")
+rmse = reg_evaluator.evaluate(lr_predictions, {reg_evaluator.metricName: "rmse"})
+r2 = reg_evaluator.evaluate(lr_predictions, {reg_evaluator.metricName: "r2"})
 
-print("Decision Tree Performance:")
-print(f"Accuracy: {accuracy:.4f}")
-print(f"Precision: {precision:.4f}")
-print(f"Recall: {recall:.4f}")
-print(f"F1 Score: {f1:.4f}")
+print(f"\nLinear Regression RMSE: {rmse}")
+print(f"R-squared: {r2}")
 
-# Task 9: Logistic Regression Classifier
-print("\n=== Task 9 ===")
-lr = LogisticRegression(labelCol="Outcome", featuresCol="features")
-lr_model = lr.fit(train)
-
-lr_predictions = lr_model.transform(test)
-
-lr_accuracy = evaluator.evaluate(lr_predictions, {evaluator.metricName: "accuracy"})
-lr_precision = evaluator.evaluate(lr_predictions, {evaluator.metricName: "weightedPrecision"})
-lr_recall = evaluator.evaluate(lr_predictions, {evaluator.metricName: "weightedRecall"})
-lr_f1 = evaluator.evaluate(lr_predictions, {evaluator.metricName: "f1"})
-
-print("Logistic Regression Performance:")
-print(f"Accuracy: {lr_accuracy:.4f}")
-print(f"Precision: {lr_precision:.4f}")
-print(f"Recall: {lr_recall:.4f}")
-print(f"F1 Score: {lr_f1:.4f}")
-
-# Task 10: Linear Regression Model
-print("\n=== Task 10 ===")
-lr_assembler = VectorAssembler(inputCols=["AnnualIncome"], outputCol="features")
-df_lr = lr_assembler.transform(df3)
-
-train_lr, test_lr = df_lr.randomSplit([0.8, 0.2], seed=42)
-
-linear_reg = LinearRegression(featuresCol="features", labelCol="PurchaseAmount")
-lr_model = linear_reg.fit(train_lr)
-
-lr_predictions = lr_model.transform(test_lr)
-
-evaluator = RegressionEvaluator(labelCol="PurchaseAmount", predictionCol="prediction", metricName="rmse")
-rmse = evaluator.evaluate(lr_predictions)
-evaluator = RegressionEvaluator(labelCol="PurchaseAmount", predictionCol="prediction", metricName="r2")
-r2 = evaluator.evaluate(lr_predictions)
-
-print("Linear Regression Performance:")
-print(f"Root Mean Squared Error (RMSE): {rmse:.4f}")
-print(f"R-squared (R2): {r2:.4f}")
-print(f"Coefficient: {lr_model.coefficients[0]:.6f}")
-print(f"Intercept: {lr_model.intercept:.2f}")
-
+# Show coefficients
+print("\nModel Summary:")
+print(f"Intercept: {lin_reg_model.intercept}")
+print(f"Coefficient for AnnualIncome: {lin_reg_model.coefficients[0]}")
 # Stop Spark session
 spark.stop()
+print("\nSpark session stopped.")
+# End of the script
