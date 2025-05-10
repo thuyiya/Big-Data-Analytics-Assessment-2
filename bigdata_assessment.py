@@ -12,8 +12,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
 import numpy as np
-
-# Initialize Spark session
+import os
+ 
+ # Initialize Spark session
 spark = SparkSession.builder \
     .appName("BigDataAssessment") \
     .config("spark.driver.memory", "4g") \
@@ -22,10 +23,11 @@ spark = SparkSession.builder \
     .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
     .getOrCreate()
 
+# Create output directory for visualizations
+os.makedirs("visualizations", exist_ok=True)
+
 # Task 1: Load the dataset and describe structure
-df1 = spark.read.csv("/Users/tj/Documents/Education/Big Data/ass 2/bigdata_assessment/customer_purchases.csv", 
-                    header=True, 
-                    inferSchema=True)
+df1 = spark.read.csv("customer_purchases.csv", header=True, inferSchema=True)
 
 print("=== Task 1 ===")
 print("DataFrame Structure:")
@@ -79,7 +81,7 @@ print(f"Median: {stats['median']:.2f}")
 print(f"Variance: {stats['variance']:.2f}")
 print(f"Standard Deviation: {stats['stddev']:.2f}")
 
-# Enhanced Histogram with more details
+# Histogram with proper data handling
 pd_purchase = df3.select("PurchaseAmount").toPandas()
 plt.figure(figsize=(12, 6))
 plt.hist(pd_purchase["PurchaseAmount"], bins=30, color='skyblue', edgecolor='black')
@@ -87,13 +89,15 @@ plt.title("Distribution of Purchase Amounts", fontsize=14, pad=20)
 plt.xlabel("Purchase Amount (£)", fontsize=12)
 plt.ylabel("Frequency", fontsize=12)
 plt.grid(True, alpha=0.3)
-plt.axvline(stats['mean'], color='red', linestyle='dashed', linewidth=2, label=f'Mean: £{stats["mean"]:.2f}')
-plt.axvline(stats['median'], color='green', linestyle='dashed', linewidth=2, label=f'Median: £{stats["median"]:.2f}')
+plt.axvline(stats['mean'], color='red', linestyle='dashed', linewidth=2, 
+            label=f'Mean: £{stats["mean"]:.2f}')
+plt.axvline(stats['median'], color='green', linestyle='dashed', linewidth=2, 
+            label=f'Median: £{stats["median"]:.2f}')
 plt.legend()
 plt.tight_layout()
-plt.savefig("purchase_amount_histogram.png", dpi=300, bbox_inches='tight')
+plt.savefig("visualizations/purchase_amount_histogram.png", dpi=300, bbox_inches='tight')
 plt.close()
-print("Enhanced histogram saved as purchase_amount_histogram.png")
+print("Histogram saved as visualizations/purchase_amount_histogram.png")
 
 # Task 5: Quartile info and boxplot
 print("\n=== Task 5 ===")
@@ -102,7 +106,7 @@ print(f"Q1 (25th percentile): {quartiles[0]:.2f}")
 print(f"Q2 (Median): {quartiles[1]:.2f}")
 print(f"Q3 (75th percentile): {quartiles[2]:.2f}")
 
-# Enhanced Boxplot with proper data
+# Boxplot with proper data conversion
 pd_total_purchases = df3.select("TotalPurchases").toPandas()
 plt.figure(figsize=(10, 6))
 sns.boxplot(y=pd_total_purchases["TotalPurchases"], color='lightgreen')
@@ -110,15 +114,18 @@ plt.title("Distribution of Total Purchases", fontsize=14)
 plt.ylabel("Number of Purchases", fontsize=12)
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
-plt.savefig("total_purchases_boxplot.png", dpi=300, bbox_inches='tight')
+plt.savefig("visualizations/total_purchases_boxplot.png", dpi=300, bbox_inches='tight')
 plt.close()
-print("Enhanced boxplot saved as total_purchases_boxplot.png")
+print("Boxplot saved as visualizations/total_purchases_boxplot.png")
 
-# Task 6: Relationship between PurchaseAmount and SpendingScore
+# Task 6: Correlation Analysis
 print("\n=== Task 6 ===")
 pd_scatter = df3.select("PurchaseAmount", "SpendingScore").toPandas()
+correlation = df3.stat.corr("PurchaseAmount", "SpendingScore", "pearson")
+
 plt.figure(figsize=(12, 6))
-sns.scatterplot(data=pd_scatter, x="SpendingScore", y="PurchaseAmount", alpha=0.6, color='purple')
+sns.scatterplot(data=pd_scatter, x="SpendingScore", y="PurchaseAmount", 
+               alpha=0.6, color='purple')
 plt.title("Purchase Amount vs Spending Score", fontsize=14)
 plt.xlabel("Spending Score (1-100)", fontsize=12)
 plt.ylabel("Purchase Amount (£)", fontsize=12)
@@ -130,11 +137,10 @@ plt.text(0.05, 0.95, f'Pearson r = {correlation:.2f}',
          bbox=dict(facecolor='white', alpha=0.8))
 
 plt.tight_layout()
-plt.savefig("purchase_vs_spending.png", dpi=300, bbox_inches='tight')
+plt.savefig("visualizations/purchase_vs_spending.png", dpi=300, bbox_inches='tight')
 plt.close()
-
-correlation = df3.stat.corr("PurchaseAmount", "SpendingScore", "pearson")
 print(f"Pearson correlation coefficient: {correlation:.4f}")
+print("Scatter plot saved as visualizations/purchase_vs_spending.png")
 
 # Task 7: Spark SQL query
 print("\n=== Task 7 ===")
