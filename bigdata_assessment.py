@@ -43,8 +43,10 @@ df1.show(5, truncate=False)
 print("\nSummary Statistics:")
 df1.describe().show()
 
+spark.conf.set("spark.sql.debug.maxToStringFields", 100) 
+
 # =============================================
-# 2. Enhanced Data Visualization
+# Enhanced Data Visualization
 # =============================================
 print("\nEnhanced Data Visualization Section")
 
@@ -103,53 +105,99 @@ plt.close()
 print("Saved correlation_heatmap.png")
 
 # =============================================
-# 2. Handling Missing Values
+# 2.  Handling Missing Values
 # =============================================
+
 print("\nTask 2: Handling Missing Values")
 
-# Calculate medians
-medians = df1.approxQuantile(["SpendingScore", "TotalPurchases"], [0.5], 0.01)
-spending_score_median = medians[0][0]
-total_purchases_median = medians[1][0]
+# First check for missing/null/zero values
+print("\nMissing/Null/Zero Value Analysis:")
+print(f"Total rows: {df1.count()}")
 
-print(f"Median SpendingScore: {spending_score_median}")
-print(f"Median TotalPurchases: {total_purchases_median}")
+# Check for nulls using proper column references
+null_counts = {col_name: df1.filter(df1[col_name].isNull()).count() 
+              for col_name in df1.columns}
 
-# Replace nulls with medians
-df2 = df1.withColumn(
-    "SpendingScore", 
-    when((col("SpendingScore").isNull()) | (col("SpendingScore") == 0), spending_score_median)
-    .otherwise(col("SpendingScore"))
-).withColumn(
-    "TotalPurchases",
-    when((col("TotalPurchases").isNull()) | (col("TotalPurchases") == 0), total_purchases_median)
-    .otherwise(col("TotalPurchases"))
-)
+print("\nNull counts per column:")
+for col_name, count in null_counts.items():
+    print(f"{col_name}: {count}")
 
-# Verify replacement
-print("\nMissing values after replacement:")
-df2.select([
-    sum(when(col(c).isNull() | (col(c) == 0), 1).otherwise(0)).alias(c) 
-    for c in ["SpendingScore", "TotalPurchases"]
-]).show()
+# Check for zeros in numerical columns
+numerical_cols = ['SpendingScore', 'TotalPurchases', 'PurchaseAmount', 'AnnualIncome']
+zero_counts = {col_name: df1.filter(df1[col_name] == 0).count() 
+              for col_name in numerical_cols}
+
+print("\nZero counts in numerical columns:")
+for col_name, count in zero_counts.items():
+    print(f"{col_name}: {count}")
+
+# Only proceed with replacement if needed
+if any(null_counts.values()) or any(zero_counts.values()):
+    print("\nFound missing/null/zero values - replacing with medians...")
+    
+    # Calculate medians using direct column references
+    medians = df1.approxQuantile(["SpendingScore", "TotalPurchases"], [0.5], 0.01)
+    spending_score_median = medians[0][0]
+    total_purchases_median = medians[1][0]
+    
+    # Create new DataFrame with replacements
+    from pyspark.sql.functions import when
+    
+    df2 = df1.withColumn(
+        "SpendingScore", 
+        when(df1["SpendingScore"].isNull() | (df1["SpendingScore"] == 0), spending_score_median)
+        .otherwise(df1["SpendingScore"])
+    ).withColumn(
+        "TotalPurchases",
+        when(df1["TotalPurchases"].isNull() | (df1["TotalPurchases"] == 0), total_purchases_median)
+        .otherwise(df1["TotalPurchases"])
+    )
+    print("Replacement completed.")
+else:
+    print("\nNo missing/null/zero values found in SpendingScore or TotalPurchases.")
+    df2 = df1  # Just create a copy if no replacement needed
 
 # =============================================
-# 3. Removing Rows with Missing Values
+# 3. Fixed Row Removal with Proper Imports
 # =============================================
-print("\nTask 3: Removing Rows with Missing Values")
+print("\nTask 3: Smart Row Removal")
 
-df3 = df2.filter(
-    (col("Age") != 0) & 
-    (col("Age").isNotNull()) &
-    (col("AnnualIncome") != 0) & 
-    (col("AnnualIncome").isNotNull()) &
-    (col("PurchaseAmount") != 0) & 
-    (col("PurchaseAmount").isNotNull())
+# Make sure you have this import at the top of your script:
+from pyspark.sql.functions import col, lit
+from functools import reduce
+
+# Define columns to check
+critical_columns = ["Age", "AnnualIncome", "PurchaseAmount"]
+
+# Check for problematic values first
+has_issues = any(
+    df2.where((col(c) == 0) | (col(c).isNull())).count() > 0
+    for c in critical_columns
 )
 
-rows_removed = df2.count() - df3.count()
-print(f"Number of rows removed: {rows_removed}")
-print(f"Rows in cleaned DataFrame: {df3.count()}")
+if has_issues:
+    original_count = df2.count()
+    
+    # Build dynamic filter conditions only for problematic columns
+    conditions = []
+    for column in critical_columns:
+        if df2.where((col(column) == 0) | (col(column).isNull())).count() > 0:
+            conditions.append((col(column) != 0) & col(column).isNotNull())
+    
+    # Apply filters if needed
+    if conditions:
+        final_condition = reduce(lambda a, b: a & b, conditions)
+        df3 = df2.where(final_condition)
+        rows_removed = original_count - df3.count()
+        print(f"Removed {rows_removed} rows with invalid values")
+    else:
+        df3 = df2
+        print("No invalid values found in critical columns")
+    
+    print(f"Final count: {df3.count()} (Originally {original_count})")
+else:
+    df3 = df2
+    print("No invalid values found - skipping row removal")
 
 # =============================================
 # 2,3 Steps - Post-Cleaning Visualizations
