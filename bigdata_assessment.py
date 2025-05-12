@@ -544,16 +544,21 @@ print("Saved logistic_regression_confusion_matrix.png")
 # =============================================
 print("\nTask 10: Linear Regression Model")
 
+# Prepare features
 lr_assembler = VectorAssembler(inputCols=["AnnualIncome"], outputCol="features")
 df3_lr = lr_assembler.transform(df3)
 
+# Split data
 lr_train_data, lr_test_data = df3_lr.randomSplit([0.7, 0.3], seed=42)
 
-lin_reg = LinearRegression(featuresCol="features", labelCol="PurchaseAmount")
+# Train model with regularization to avoid warning
+lin_reg = LinearRegression(featuresCol="features", 
+                          labelCol="PurchaseAmount",
+                          regParam=0.3)  # Added regularization
 lin_reg_model = lin_reg.fit(lr_train_data)
 
+# Evaluate
 lr_predictions = lin_reg_model.transform(lr_test_data)
-
 reg_evaluator = RegressionEvaluator(labelCol="PurchaseAmount", predictionCol="prediction")
 rmse = reg_evaluator.evaluate(lr_predictions, {reg_evaluator.metricName: "rmse"})
 r2 = reg_evaluator.evaluate(lr_predictions, {reg_evaluator.metricName: "r2"})
@@ -564,6 +569,20 @@ print(f"R-squared: {r2}")
 print("\nModel Summary:")
 print(f"Intercept: {lin_reg_model.intercept}")
 print(f"Coefficient for AnnualIncome: {lin_reg_model.coefficients[0]}")
+
+# Convert predictions to Pandas for visualization
+pred_pd = lr_predictions.select("PurchaseAmount", "prediction").toPandas()
+
+# Plot residuals
+plt.figure(figsize=(10, 6))
+plt.scatter(pred_pd["prediction"], pred_pd["PurchaseAmount"] - pred_pd["prediction"])
+plt.axhline(y=0, color='r', linestyle='--')
+plt.title("Residual Plot")
+plt.xlabel("Predicted Values")
+plt.ylabel("Residuals")
+plt.savefig("visualizations/residual_plot.png")
+plt.close()
+print("Saved residual_plot.png")
 
 # =============================================
 # Cleanup
