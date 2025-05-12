@@ -10,6 +10,10 @@ from pyspark.ml import Pipeline
 from pyspark.ml.classification import DecisionTreeClassifier, LogisticRegression
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.evaluation import BinaryClassificationEvaluator, RegressionEvaluator
+from pyspark.sql.functions import percentile_approx
+from pyspark.sql.functions import col, lit
+from pyspark.sql.functions import when
+from functools import reduce
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
@@ -141,7 +145,6 @@ if any(null_counts.values()) or any(zero_counts.values()):
     total_purchases_median = medians[1][0]
     
     # Create new DataFrame with replacements
-    from pyspark.sql.functions import when
     
     df2 = df1.withColumn(
         "SpendingScore", 
@@ -158,13 +161,9 @@ else:
     df2 = df1  # Just create a copy if no replacement needed
 
 # =============================================
-# 3. Fixed Row Removal with Proper Imports
+# 3. Data Cleaning
 # =============================================
-print("\nTask 3: Smart Row Removal")
-
-# Make sure you have this import at the top of your script:
-from pyspark.sql.functions import col, lit
-from functools import reduce
+print("\nTask 3: Data Cleaning")
 
 # Define columns to check
 critical_columns = ["Age", "AnnualIncome", "PurchaseAmount"]
@@ -315,6 +314,7 @@ print(f"\nPearson correlation: {corr}")
 # =============================================
 # 7. Spark SQL Query
 # =============================================
+print("\nTask 7: Spark SQL Query")
 # First check if the conditions are possible
 min_age, max_age = df3.select(min("Age"), max("Age")).first()
 min_score, max_score = df3.select(min("SpendingScore"), max("SpendingScore")).first()
@@ -433,20 +433,111 @@ print("Saved decision_tree_confusion_matrix.png")
 # =============================================
 print("\nTask 9: Logistic Regression Classifier")
 
-if "Outcome" in df3.columns:
-    lr = LogisticRegression(labelCol="Outcome", featuresCol="features")
-    lr_model = lr.fit(train_data)
-    
-    lr_predictions = lr_model.transform(test_data)
-    
-    lr_accuracy = evaluator.evaluate(lr_predictions)
-    print(f"\nLogistic Regression AUC: {lr_accuracy}")
-    
-    print("\nModel Coefficients:")
-    for feature, coef in zip(feature_cols, lr_model.coefficients):
-        print(f"{feature}: {coef}")
-else:
-    print("Outcome column not found")
+# Synthetic approch since there is no outcome column in the original dataset
+# This is using - High Spender Classification: Binary outcome based on spending behavior
+
+# Create meaningful binary outcome based on business logic
+# High spender = 1 if in top 30% of both SpendingScore and PurchaseAmount
+
+# Calculate thresholds for high spenders
+spending_threshold = df3.select(percentile_approx("SpendingScore", 0.7)).collect()[0][0]
+purchase_threshold = df3.select(percentile_approx("PurchaseAmount", 0.7)).collect()[0][0]
+
+print(f"\nCreating outcome variable:")
+print(f" - SpendingScore threshold (70th percentile): {spending_threshold}")
+print(f" - PurchaseAmount threshold (70th percentile): {purchase_threshold}")
+
+# Create binary outcome
+df3_with_outcome = df3.withColumn(
+    "HighSpender",
+    when(
+        (col("SpendingScore") >= spending_threshold) & 
+        (col("PurchaseAmount") >= purchase_threshold), 
+        1
+    ).otherwise(0)
+)
+
+# Show distribution
+print("\nHighSpender class distribution:")
+df3_with_outcome.groupBy("HighSpender").count().show()
+
+# Prepare features - same as Task 8
+categorical_cols = ["Gender", "PurchaseCategory"]
+indexers = [StringIndexer(inputCol=col, outputCol=col+"_indexed") for col in categorical_cols]
+
+numerical_cols = [col for col in df3.columns 
+                 if col not in ["CustomerID", "HighSpender"] + categorical_cols]
+
+# Pipeline for feature preparation
+pipeline = Pipeline(stages=indexers + [VectorAssembler(
+    inputCols=numerical_cols + [col+"_indexed" for col in categorical_cols],
+    outputCol="features"
+)])
+
+# Fit and transform
+prepared_data = pipeline.fit(df3_with_outcome).transform(df3_with_outcome)
+
+# Split data
+train_data, test_data = prepared_data.randomSplit([0.7, 0.3], seed=42)
+
+# Initialize and train Logistic Regression
+lr = LogisticRegression(
+    labelCol="HighSpender",
+    featuresCol="features",
+    family="binomial",
+    maxIter=10,
+    regParam=0.3,
+    elasticNetParam=0.8
+)
+
+# Train model
+lr_model = lr.fit(train_data)
+
+# Make predictions
+predictions = lr_model.transform(test_data)
+
+# Evaluate model
+evaluator = BinaryClassificationEvaluator(
+    labelCol="HighSpender",
+    rawPredictionCol="rawPrediction",
+    metricName="areaUnderROC"
+)
+
+# Calculate metrics
+auc_roc = evaluator.evaluate(predictions)
+accuracy = predictions.filter(col("prediction") == col("HighSpender")).count() / test_data.count()
+
+# Print comprehensive results
+print("\nLogistic Regression Model Performance:")
+print(f"Area Under ROC: {auc_roc:.4f}")
+print(f"Accuracy: {accuracy:.4f}")
+
+# Feature importance analysis
+print("\nModel Coefficients and Odds Ratios:")
+feature_importance = pd.DataFrame({
+    "Feature": numerical_cols + [col+"_indexed" for col in categorical_cols],
+    "Coefficient": lr_model.coefficients.toArray(),
+    "Odds_Ratio": np.exp(lr_model.coefficients.toArray())
+}).sort_values("Odds_Ratio", ascending=False)
+
+print(feature_importance.to_string())
+
+# Confusion Matrix
+conf_matrix = predictions.groupBy("HighSpender", "prediction").count().orderBy("HighSpender", "prediction")
+print("\nConfusion Matrix:")
+conf_matrix.show()
+
+# Save performance visualization
+predictions_pd = predictions.select("HighSpender", "prediction", "probability").toPandas()
+plt.figure(figsize=(10, 6))
+sns.heatmap(confusion_matrix(predictions_pd["HighSpender"], predictions_pd["prediction"]), 
+            annot=True, fmt="d", cmap="Blues")
+plt.title("Logistic Regression Confusion Matrix")
+plt.xlabel("Predicted")
+plt.ylabel("Actual")
+plt.savefig('visualizations/logistic_regression_confusion_matrix.png')
+plt.close()
+print("Saved logistic_regression_confusion_matrix.png")
 
 # =============================================
 # 10. Linear Regression Model
